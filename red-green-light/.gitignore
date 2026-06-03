@@ -1,0 +1,7 @@
+manual-build/*
+!manual-build/
+!manual-build/zsibot-red-light-green-light.apk
+
+.gradle/
+build/
+app/build/
