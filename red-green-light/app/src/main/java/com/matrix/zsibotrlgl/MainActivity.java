@@ -46,8 +46,8 @@ public class MainActivity extends Activity {
     private static final int DEFAULT_UDP_PORT = 8081;
     private static final String DEFAULT_GATEWAY_URL = "";
     private static final String DEFAULT_NETWORK_SERVICE_URL = "http://192.168.234.1:8876";
-    private static final int MIN_PHASE_MS = 2000;
-    private static final int MAX_PHASE_MS = 10000;
+    private static final int MIN_PHASE_MS = 3000;
+    private static final int MAX_PHASE_MS = 8000;
     private static final int STAND_READY_MS = 2800;
 
     private static final GameAction FORWARD = new GameAction(
@@ -62,13 +62,13 @@ public class MainActivity extends Activity {
     );
     private static final GameAction LEFT = new GameAction(
             "向左移", "left", "向左移", SignalView.Icon.LEFT,
-            -0.38, 0.0, 0.0, 0.0,
-            0.0, -0.48, 0.0
+            -0.50, 0.0, 0.0, 0.0,
+            0.0, -0.62, 0.0
     );
     private static final GameAction RIGHT = new GameAction(
             "向右移", "right", "向右移", SignalView.Icon.RIGHT,
-            0.38, 0.0, 0.0, 0.0,
-            0.0, 0.48, 0.0
+            0.50, 0.0, 0.0, 0.0,
+            0.0, 0.62, 0.0
     );
     private static final GameAction TURN_LEFT = new GameAction(
             "向左转", "turn left", "向左转", SignalView.Icon.TURN_LEFT,
@@ -88,12 +88,17 @@ public class MainActivity extends Activity {
     private static final SpecialAction JUMP_UP = new SpecialAction(
             "往上跳", "jump up", "往上跳", SignalView.Icon.JUMP_UP,
             1, "jump", 2200, 155, "recover", 1200,
-            true, false, false, false, -1, 0
+            true, true, false, false, -1, 0
     );
     private static final SpecialAction FRONT_JUMP = new SpecialAction(
             "向前跳", "front jump", "向前跳", SignalView.Icon.FORWARD,
             2, "frontjump", 2400, 155, "recover", 1200,
-            true, false, false, false, -1, 0
+            true, true, false, false, -1, 0
+    );
+    private static final SpecialAction BACK_FLIP = new SpecialAction(
+            "后空翻", "back flip", "后空翻", SignalView.Icon.JUMP_UP,
+            3, "backflip", 3200, 155, "recover", 1400,
+            true, true, false, false, -1, 0
     );
     private static final SpecialAction TWO_LEG_STAND = new SpecialAction(
             "双腿站立", "two leg stand", "双腿站立", SignalView.Icon.STAY,
@@ -117,29 +122,45 @@ public class MainActivity extends Activity {
             "小兔子", "小兔子，原地跳", SignalView.Icon.JUMP_UP, JUMP_UP,
             new LibraryStep[]{
                     LibraryStep.cmd(1, "jump", 2200),
-                    LibraryStep.cmd(155, "recover", 900)
+                    LibraryStep.cmd(155, "recover", 1000),
+                    LibraryStep.cmd(122, "stand", 1700),
+                    LibraryStep.cmd(175, "", 300)
             },
-            5200
+            6800
     );
     private static final LibraryAction KANGAROO_FRONT_JUMP = new LibraryAction(
             "小袋鼠", "小袋鼠，向前跳", SignalView.Icon.FORWARD, FRONT_JUMP,
             new LibraryStep[]{
                     LibraryStep.cmd(2, "frontjump", 2400),
-                    LibraryStep.cmd(155, "recover", 900)
+                    LibraryStep.cmd(155, "recover", 1000),
+                    LibraryStep.cmd(122, "stand", 1800),
+                    LibraryStep.cmd(175, "", 300)
             },
-            5600
+            7200
     );
-    private static final LibraryAction ACTOR_STAY_SWAY = new LibraryAction(
-            "小演员", "小演员，身体摇摆", SignalView.Icon.STAY, null,
+    private static final LibraryAction ACTOR_SIDE_STEP = new LibraryAction(
+            "小演员", "小演员，左移右移", SignalView.Icon.LEFT, null,
             new LibraryStep[]{
-                    LibraryStep.cmd(122, "stand", 500),
-                    LibraryStep.pose(-0.26, 0.0, 0.0, 0.0, 520),
-                    LibraryStep.pose(0.26, 0.0, 0.0, 0.0, 520),
-                    LibraryStep.pose(0.0, 0.0, 0.0, -0.24, 520),
-                    LibraryStep.pose(0.0, 0.0, 0.0, 0.24, 520),
-                    LibraryStep.pose(0.0, 0.0, 0.0, 0.0, 260)
+                    LibraryStep.cmd(122, "stand", 700),
+                    LibraryStep.move(LEFT, 1200),
+                    LibraryStep.move(RIGHT, 1200)
             },
-            5600
+            6200
+    );
+    private static final LibraryAction DANCER_STAY_SWAY = new LibraryAction(
+            "小舞者", "小舞者，身体摇摆", SignalView.Icon.STAY, null,
+            new LibraryStep[]{
+                    LibraryStep.cmd(122, "stand", 800),
+                    LibraryStep.cmd(175, "", 500),
+                    LibraryStep.pose(-0.78, 0.0, 0.0, 0.0, 680),
+                    LibraryStep.pose(0.78, 0.0, 0.0, 0.0, 680),
+                    LibraryStep.pose(0.0, 0.0, 0.0, -0.78, 680),
+                    LibraryStep.pose(0.0, 0.0, 0.0, 0.78, 680),
+                    LibraryStep.pose(0.0, 0.0, -0.62, 0.0, 680),
+                    LibraryStep.pose(0.0, 0.0, 0.62, 0.0, 680),
+                    LibraryStep.pose(0.0, 0.0, 0.0, 0.0, 300)
+            },
+            7200
     );
     private static final LibraryAction PATROL_TURNS = new LibraryAction(
             "小狗巡逻队", "小狗巡逻队，左转右转", SignalView.Icon.TURN_LEFT, null,
@@ -157,21 +178,47 @@ public class MainActivity extends Activity {
             },
             5200
     );
+    private static final LibraryAction GORILLA_TWO_LEG_STAND = new LibraryAction(
+            "小猩猩", "小猩猩，后足站立", SignalView.Icon.STAY, TWO_LEG_STAND,
+            new LibraryStep[]{
+                    LibraryStep.cmd(5, "two_leg_stand", 3000),
+                    LibraryStep.cmd(155, "recover", 1200),
+                    LibraryStep.cmd(122, "stand", 1800),
+                    LibraryStep.cmd(175, "", 300)
+            },
+            7000
+    );
+    private static final LibraryAction ATHLETE_BACK_FLIP = new LibraryAction(
+            "小运动员", "小运动员，后空翻", SignalView.Icon.JUMP_UP, BACK_FLIP,
+            new LibraryStep[]{
+                    LibraryStep.cmd(3, "backflip", 3200),
+                    LibraryStep.cmd(155, "recover", 1300),
+                    LibraryStep.cmd(122, "stand", 2200),
+                    LibraryStep.cmd(175, "", 300)
+            },
+            8000
+    );
     private static final LibraryAction[] GAME_ACTIONS = {
             FROG_SQUAT,
             BUNNY_JUMP,
             KANGAROO_FRONT_JUMP,
-            ACTOR_STAY_SWAY,
+            ACTOR_SIDE_STEP,
             PATROL_TURNS,
-            ROBOT_FORWARD_BACK
+            ROBOT_FORWARD_BACK,
+            GORILLA_TWO_LEG_STAND,
+            DANCER_STAY_SWAY,
+            ATHLETE_BACK_FLIP
     };
     private static final Object[] TEST_ACTIONS = {
             FROG_SQUAT,
             BUNNY_JUMP,
             KANGAROO_FRONT_JUMP,
-            ACTOR_STAY_SWAY,
+            ACTOR_SIDE_STEP,
             PATROL_TURNS,
-            ROBOT_FORWARD_BACK
+            ROBOT_FORWARD_BACK,
+            GORILLA_TWO_LEG_STAND,
+            DANCER_STAY_SWAY,
+            ATHLETE_BACK_FLIP
     };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -425,6 +472,7 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacks(nextGreen);
         mainHandler.removeCallbacks(testStep);
         stopMoveCommands(true);
+        network.execute(this::recoverAfterManualStop);
         signalView.setPhase(SignalView.Phase.HIDDEN);
         dogFace.setMood(DogFaceView.Mood.IDLE);
         startButton.setEnabled(true);
@@ -442,8 +490,16 @@ public class MainActivity extends Activity {
 
     private void enterRedPhase() {
         stopMoveCommands(false);
-        showRed(false);
-        mainHandler.postDelayed(nextGreen, randomPhaseDelayMs());
+        network.execute(() -> {
+            sendStopBeforeRed();
+            mainHandler.post(() -> {
+                if (gameRunning) {
+                    showRed(false);
+                    mainHandler.postDelayed(nextGreen, randomPhaseDelayMs());
+                }
+            });
+            sendStopAfterRed();
+        });
     }
 
     private void startActionTest() {
@@ -484,8 +540,16 @@ public class MainActivity extends Activity {
                     return;
                 }
                 stopMoveCommands(false);
-                showRed(true);
-                mainHandler.postDelayed(testStep, 1000);
+                network.execute(() -> {
+                    sendStopBeforeRed();
+                    mainHandler.post(() -> {
+                        if (testRunning) {
+                            showRed(true);
+                            mainHandler.postDelayed(testStep, 1000);
+                        }
+                    });
+                    sendStopAfterRed();
+                });
             }, 1800);
         } else if (action instanceof SpecialAction) {
             SpecialAction special = (SpecialAction) action;
@@ -536,12 +600,13 @@ public class MainActivity extends Activity {
         showGreen(action, true);
         network.execute(() -> {
             sendSpecialAction(action);
+            sendStopBeforeRed();
             mainHandler.post(() -> {
                 if (testRunning) {
                     showRed(true);
                 }
             });
-            sendDirectStopBurst();
+            sendStopAfterRed();
             recoverAfterSpecial(action);
             mainHandler.post(() -> {
                 if (testRunning) {
@@ -569,12 +634,13 @@ public class MainActivity extends Activity {
             if (!gameRunning) {
                 return;
             }
+            sendStopBeforeRed();
             mainHandler.post(() -> {
                 if (gameRunning) {
                     showRed(false);
                 }
             });
-            sendDirectStopBurst();
+            sendStopAfterRed();
             if (hasGatewayFallback()) {
                 sendGatewayCommand("halt_move", 0.12);
             }
@@ -602,6 +668,10 @@ public class MainActivity extends Activity {
 
     private void runLibraryAction(LibraryAction action, boolean testing, int token, int phaseMs) {
         if (action.warmupAction != null) {
+            prepareBeforeSpecialLibraryAction();
+            if (!isLibraryActionActive(testing, token)) {
+                return;
+            }
             prepareSpecialAction(action.warmupAction);
             if (!isLibraryActionActive(testing, token)) {
                 return;
@@ -643,12 +713,13 @@ public class MainActivity extends Activity {
         if (!isLibraryActionActive(testing, token)) {
             return;
         }
+        sendStopBeforeRed();
         mainHandler.post(() -> {
             if (isLibraryActionActive(testing, token)) {
                 showRed(testing);
             }
         });
-        sendDirectStopBurst();
+        sendStopAfterRed();
         if (hasGatewayFallback()) {
             sendGatewayCommand("halt_move", 0.12);
         }
@@ -685,7 +756,7 @@ public class MainActivity extends Activity {
             InetAddress address = InetAddress.getByName(robotIp);
             DatagramSocket socket = new DatagramSocket();
             try {
-                sendDirectCmd(socket, address, usesLowSpeed(action) ? 174 : 175, 5, 30);
+                sendDirectCmd(socket, address, 174, 5, 30);
                 sleepQuietly(120);
                 long stepEnd = Math.min(phaseEndMs, System.currentTimeMillis() + Math.max(120, durationMs));
                 long lastGatewayMs = 0;
@@ -748,8 +819,28 @@ public class MainActivity extends Activity {
         if (action.warmupAction != null) {
             recoverAfterSpecial(action.warmupAction);
         } else {
-            sendDirectCmd(122, 5);
+            lockAfterAction();
         }
+    }
+
+    private void prepareBeforeSpecialLibraryAction() {
+        sendDirectStopBurst();
+        sleepQuietly(180);
+        sendDirectCmd(155, 5);
+        sleepQuietly(900);
+        sendDirectCmd(122, 6);
+        sleepQuietly(STAND_READY_MS);
+        sendDirectCmd(175, 5);
+        sleepQuietly(220);
+    }
+
+    private void lockAfterAction() {
+        sendDirectCmd(175, 5);
+        sleepQuietly(220);
+    }
+
+    private boolean isJumpStyleAction(SpecialAction action) {
+        return action == JUMP_UP || action == FRONT_JUMP || action == BACK_FLIP;
     }
 
     private void beginMoveCommands(GameAction action, double maxSeconds) {
@@ -841,16 +932,32 @@ public class MainActivity extends Activity {
         }
         sendDirectDebugSpeed(-1, 5, 0);
         sleepQuietly(120);
-        sendDirectStopBurst();
-        sleepQuietly(180);
-        sendDirectCmd(122, 5);
-        sleepQuietly(STAND_READY_MS);
-        sendDirectCmd(175, 5);
-        sleepQuietly(220);
+        standAndLockAfterAction();
     }
 
     private boolean needsPostSpecialStand(SpecialAction action) {
-        return action == WAVE || action == TWO_LEG_STAND;
+        return action == WAVE || action == TWO_LEG_STAND || isJumpStyleAction(action);
+    }
+
+    private void recoverAfterManualStop() {
+        sendDirectStopBurst();
+        sleepQuietly(180);
+        sendDirectCmd(155, 6);
+        sleepQuietly(1000);
+        sendDirectCmd(122, 6);
+        sleepQuietly(STAND_READY_MS);
+        sendDirectCmd(174, 5);
+        sleepQuietly(220);
+        sendDirectStopBurst(6, 25);
+    }
+
+    private void standAndLockAfterAction() {
+        sendDirectStopBurst();
+        sleepQuietly(180);
+        sendDirectCmd(122, 6);
+        sleepQuietly(STAND_READY_MS);
+        sendDirectCmd(175, 5);
+        sleepQuietly(220);
     }
 
     private void directUdpMoveLoop(GameAction action, double maxSeconds, int token) {
@@ -991,11 +1098,26 @@ public class MainActivity extends Activity {
         sendDirectHeartbeat(socket, address);
     }
 
+    private void sendStopBeforeRed() {
+        sendDirectStopBurst(18, 25);
+        sleepQuietly(120);
+    }
+
+    private void sendStopAfterRed() {
+        sendDirectStopBurst(10, 25);
+    }
+
     private void sendDirectStopBurst() {
+        sendDirectStopBurst(10, 25);
+    }
+
+    private void sendDirectStopBurst(int repeat, int gapMs) {
         try {
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < Math.max(1, repeat); i++) {
                 sendDirectFrame(0.0, 0.0, 0.0, 0.0);
-                Thread.sleep(25);
+                if (gapMs > 0) {
+                    Thread.sleep(gapMs);
+                }
             }
         } catch (Exception ignored) {
         }
