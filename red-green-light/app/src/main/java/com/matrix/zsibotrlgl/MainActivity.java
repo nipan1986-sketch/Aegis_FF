@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,6 +17,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,6 +39,8 @@ import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -46,9 +50,13 @@ public class MainActivity extends Activity {
     private static final int DEFAULT_UDP_PORT = 8081;
     private static final String DEFAULT_GATEWAY_URL = "";
     private static final String DEFAULT_NETWORK_SERVICE_URL = "http://192.168.234.1:8876";
-    private static final int MIN_PHASE_MS = 3000;
-    private static final int MAX_PHASE_MS = 8000;
+    private static final int GREEN_PHASE_MS = 8000;
+    private static final int RED_PHASE_MS = 3000;
+    private static final int STOP_BEFORE_RED_MS = 2000;
     private static final int STAND_READY_MS = 2800;
+    private static final int START_COUNTDOWN_MS = 3300;
+    private static final int RED_READY_TIMEOUT_NORMAL_MS = 1300;
+    private static final int RED_READY_TIMEOUT_SPECIAL_MS = 2600;
 
     private static final GameAction FORWARD = new GameAction(
             "往前走", "forward", "往前走", SignalView.Icon.FORWARD,
@@ -80,6 +88,36 @@ public class MainActivity extends Activity {
             0.0, 0.0, -0.45, 0.0,
             0.0, 0.0, -0.72
     );
+    private static final GameAction ACTOR_LEFT_03 = new GameAction(
+            "向左移", "left", "向左移", SignalView.Icon.LEFT,
+            -0.30, 0.0, 0.0, 0.0,
+            0.0, -0.30, 0.0
+    );
+    private static final GameAction ACTOR_RIGHT_03 = new GameAction(
+            "向右移", "right", "向右移", SignalView.Icon.RIGHT,
+            0.30, 0.0, 0.0, 0.0,
+            0.0, 0.30, 0.0
+    );
+    private static final GameAction PATROL_TURN_LEFT_03 = new GameAction(
+            "向左转", "turn left", "向左转", SignalView.Icon.TURN_LEFT,
+            0.0, 0.0, 0.30, 0.0,
+            0.0, 0.0, 0.30
+    );
+    private static final GameAction PATROL_TURN_RIGHT_03 = new GameAction(
+            "向右转", "turn right", "向右转", SignalView.Icon.TURN_RIGHT,
+            0.0, 0.0, -0.30, 0.0,
+            0.0, 0.0, -0.30
+    );
+    private static final GameAction ROBOT_FORWARD_03 = new GameAction(
+            "往前走", "forward", "往前走", SignalView.Icon.FORWARD,
+            0.0, -0.45, 0.0, 0.0,
+            0.30, 0.0, 0.0
+    );
+    private static final GameAction ROBOT_BACKWARD_03 = new GameAction(
+            "往后退", "backward", "往后退", SignalView.Icon.BACKWARD,
+            0.0, 0.45, 0.0, 0.0,
+            -0.30, 0.0, 0.0
+    );
     private static final SpecialAction LIE_DOWN = new SpecialAction(
             "趴下", "lie", "趴下", SignalView.Icon.STAY,
             106, "lie", 2100, 122, "stand", 1700,
@@ -92,7 +130,7 @@ public class MainActivity extends Activity {
     );
     private static final SpecialAction FRONT_JUMP = new SpecialAction(
             "向前跳", "front jump", "向前跳", SignalView.Icon.FORWARD,
-            2, "frontjump", 2400, 155, "recover", 1200,
+            2, "frontjump", 2600, 155, "recover", 1600,
             true, true, false, false, -1, 0
     );
     private static final SpecialAction BACK_FLIP = new SpecialAction(
@@ -131,19 +169,17 @@ public class MainActivity extends Activity {
     private static final LibraryAction KANGAROO_FRONT_JUMP = new LibraryAction(
             "小袋鼠", "小袋鼠，向前跳", SignalView.Icon.FORWARD, FRONT_JUMP,
             new LibraryStep[]{
-                    LibraryStep.cmd(2, "frontjump", 2400),
-                    LibraryStep.cmd(155, "recover", 1000),
-                    LibraryStep.cmd(122, "stand", 1800),
-                    LibraryStep.cmd(175, "", 300)
+                    LibraryStep.cmd(2, "frontjump", 2800),
+                    LibraryStep.cmd(155, "recover", 1700),
+                    LibraryStep.cmd(122, "stand", 2500)
             },
             7200
     );
     private static final LibraryAction ACTOR_SIDE_STEP = new LibraryAction(
             "小演员", "小演员，左移右移", SignalView.Icon.LEFT, null,
             new LibraryStep[]{
-                    LibraryStep.cmd(122, "stand", 700),
-                    LibraryStep.move(LEFT, 1200),
-                    LibraryStep.move(RIGHT, 1200)
+                    LibraryStep.move(ACTOR_LEFT_03, 2000),
+                    LibraryStep.move(ACTOR_RIGHT_03, 2000)
             },
             6200
     );
@@ -165,25 +201,23 @@ public class MainActivity extends Activity {
     private static final LibraryAction PATROL_TURNS = new LibraryAction(
             "小狗巡逻队", "小狗巡逻队，左转右转", SignalView.Icon.TURN_LEFT, null,
             new LibraryStep[]{
-                    LibraryStep.move(TURN_LEFT, 900),
-                    LibraryStep.move(TURN_RIGHT, 900)
+                    LibraryStep.move(PATROL_TURN_LEFT_03, 2000),
+                    LibraryStep.move(PATROL_TURN_RIGHT_03, 2000)
             },
             5200
     );
     private static final LibraryAction ROBOT_FORWARD_BACK = new LibraryAction(
             "小机器人", "小机器人，前进后退", SignalView.Icon.FORWARD, null,
             new LibraryStep[]{
-                    LibraryStep.move(FORWARD, 950),
-                    LibraryStep.move(BACKWARD, 950)
+                    LibraryStep.move(ROBOT_FORWARD_03, 2000),
+                    LibraryStep.move(ROBOT_BACKWARD_03, 2000)
             },
             5200
     );
     private static final LibraryAction GORILLA_TWO_LEG_STAND = new LibraryAction(
             "小猩猩", "小猩猩，后足站立", SignalView.Icon.STAY, TWO_LEG_STAND,
             new LibraryStep[]{
-                    LibraryStep.cmd(5, "two_leg_stand", 3000),
-                    LibraryStep.cmd(155, "recover", 1200),
-                    LibraryStep.cmd(122, "stand", 1800),
+                    LibraryStep.cmd(5, "two_leg_stand", 5200),
                     LibraryStep.cmd(175, "", 300)
             },
             7000
@@ -223,11 +257,14 @@ public class MainActivity extends Activity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService network = Executors.newCachedThreadPool();
+    private final ExecutorService robotCommands = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor();
     private final Random random = new Random();
     private final AtomicBoolean moveStreaming = new AtomicBoolean(false);
     private final AtomicInteger udpSeq = new AtomicInteger(1);
     private final AtomicInteger motionToken = new AtomicInteger(1);
 
+    private ImageView themeImage;
     private DogFaceView dogFace;
     private SignalView signalView;
     private TextView statusText;
@@ -286,6 +323,7 @@ public class MainActivity extends Activity {
         loadSettings();
         buildUi();
         initTts();
+        startHeartbeatLoop();
         showIdle();
     }
 
@@ -302,6 +340,8 @@ public class MainActivity extends Activity {
         super.onDestroy();
         stopMoveCommands(false);
         mainHandler.removeCallbacksAndMessages(null);
+        heartbeat.shutdownNow();
+        robotCommands.shutdownNow();
         network.shutdownNow();
         if (tts != null) {
             tts.shutdown();
@@ -312,7 +352,16 @@ public class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(255, 246, 132));
 
+        themeImage = new ImageView(this);
+        themeImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        themeImage.setImageResource(R.drawable.ui_welcome);
+        root.addView(themeImage, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
         dogFace = new DogFaceView(this);
+        dogFace.setVisibility(View.GONE);
         root.addView(dogFace, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -331,6 +380,7 @@ public class MainActivity extends Activity {
         statusText.setGravity(Gravity.CENTER_VERTICAL);
         statusText.setPadding(dp(14), 0, dp(14), 0);
         statusText.setBackgroundColor(Color.argb(55, 255, 255, 255));
+        statusText.setVisibility(View.GONE);
         FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(dp(410), dp(46));
         statusParams.gravity = Gravity.TOP | Gravity.LEFT;
         statusParams.setMargins(dp(18), dp(16), 0, 0);
@@ -340,9 +390,9 @@ public class MainActivity extends Activity {
         controls.setGravity(Gravity.CENTER);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setPadding(dp(10), dp(10), dp(10), dp(10));
-        controls.setBackgroundColor(Color.argb(78, 255, 255, 255));
+        controls.setBackgroundColor(Color.argb(0, 255, 255, 255));
 
-        startButton = makeButton("开始", Color.rgb(18, 130, 78));
+        startButton = makeButton("Start", Color.rgb(245, 154, 22));
         startButton.setOnClickListener(v -> startGame());
         controls.addView(startButton, buttonParams());
 
@@ -383,14 +433,18 @@ public class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextSize(18);
+        button.setTextSize(20);
         button.setTextColor(Color.WHITE);
-        button.setBackgroundColor(color);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(3), Color.WHITE);
+        button.setBackground(bg);
         return button;
     }
 
     private LinearLayout.LayoutParams buttonParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(106), dp(52));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(118), dp(56));
         params.setMargins(dp(8), 0, dp(8), 0);
         return params;
     }
@@ -445,9 +499,13 @@ public class MainActivity extends Activity {
         gameRunning = false;
         moveStreaming.set(false);
         signalView.setPhase(SignalView.Phase.HIDDEN);
-        dogFace.setMood(DogFaceView.Mood.IDLE);
+        showThemeImage(R.drawable.ui_welcome);
         startButton.setEnabled(true);
         testButton.setEnabled(true);
+        stopButton.setVisibility(View.GONE);
+        stopButton.setEnabled(false);
+        startButton.setVisibility(View.VISIBLE);
+        testButton.setVisibility(View.VISIBLE);
         updateStatus("按开始按钮开始  " + robotIp + ":" + udpPort);
     }
 
@@ -458,11 +516,13 @@ public class MainActivity extends Activity {
         gameRunning = true;
         startButton.setEnabled(false);
         testButton.setEnabled(false);
+        stopButton.setVisibility(View.VISIBLE);
+        stopButton.setEnabled(true);
         signalView.setPhase(SignalView.Phase.HIDDEN);
-        dogFace.setMood(DogFaceView.Mood.HAPPY);
+        showCountdown();
         updateStatus("准备开始");
         sendStandCommands();
-        mainHandler.postDelayed(nextGreen, STAND_READY_MS);
+        mainHandler.postDelayed(nextGreen, START_COUNTDOWN_MS);
     }
 
     private void stopGame(boolean speak) {
@@ -472,11 +532,15 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacks(nextGreen);
         mainHandler.removeCallbacks(testStep);
         stopMoveCommands(true);
-        network.execute(this::recoverAfterManualStop);
+        robotCommands.execute(this::recoverAfterManualStop);
         signalView.setPhase(SignalView.Phase.HIDDEN);
-        dogFace.setMood(DogFaceView.Mood.IDLE);
+        showThemeImage(R.drawable.ui_welcome);
         startButton.setEnabled(true);
         testButton.setEnabled(true);
+        stopButton.setVisibility(View.GONE);
+        stopButton.setEnabled(false);
+        startButton.setVisibility(View.VISIBLE);
+        testButton.setVisibility(View.VISIBLE);
         updateStatus("已停止");
         if (speak) {
             speak("游戏停止");
@@ -490,12 +554,12 @@ public class MainActivity extends Activity {
 
     private void enterRedPhase() {
         stopMoveCommands(false);
-        network.execute(() -> {
+        robotCommands.execute(() -> {
             sendStopBeforeRed();
             mainHandler.post(() -> {
                 if (gameRunning) {
                     showRed(false);
-                    mainHandler.postDelayed(nextGreen, randomPhaseDelayMs());
+                    mainHandler.postDelayed(nextGreen, RED_PHASE_MS);
                 }
             });
             sendStopAfterRed();
@@ -510,12 +574,14 @@ public class MainActivity extends Activity {
         testIndex = 0;
         startButton.setEnabled(false);
         testButton.setEnabled(false);
+        stopButton.setVisibility(View.VISIBLE);
+        stopButton.setEnabled(true);
         signalView.setPhase(SignalView.Phase.HIDDEN);
-        dogFace.setMood(DogFaceView.Mood.HAPPY);
+        showCountdown();
         updateStatus("动作测试准备");
         speak("动作测试开始");
         sendStandCommands();
-        mainHandler.postDelayed(testStep, STAND_READY_MS);
+        mainHandler.postDelayed(testStep, START_COUNTDOWN_MS);
     }
 
     private void runNextTestAction() {
@@ -560,45 +626,66 @@ public class MainActivity extends Activity {
     }
 
     private void showGreen(GameAction action, boolean testing) {
+        hideThemeImage();
         signalView.setGreenAction(action.zh, action.icon);
         signalView.setPhase(SignalView.Phase.GREEN);
-        dogFace.setMood(DogFaceView.Mood.FOCUS);
         updateStatus((testing ? "测试  " : "Green Light  ") + action.zh);
         speak("Green Light！" + action.speech + "！");
     }
 
     private void showGreen(SpecialAction action, boolean testing) {
+        hideThemeImage();
         signalView.setGreenAction(action.zh, action.icon);
         signalView.setPhase(SignalView.Phase.GREEN);
-        dogFace.setMood(DogFaceView.Mood.FOCUS);
         updateStatus((testing ? "测试  " : "Green Light  ") + action.zh);
         speak("Green Light！" + action.speech + "！");
     }
 
     private void showGreen(LibraryAction action, boolean testing) {
+        hideThemeImage();
         signalView.setGreenAction(action.zh, action.icon);
         signalView.setPhase(SignalView.Phase.GREEN);
-        dogFace.setMood(DogFaceView.Mood.FOCUS);
         updateStatus((testing ? "测试  " : "Green Light  ") + action.zh);
         speak("Green Light！" + action.speech + "！");
     }
 
     private void showRed(boolean testing) {
+        hideThemeImage();
+        signalView.setRedScene(random.nextInt(SignalView.RED_SCENE_COUNT));
         signalView.setPhase(SignalView.Phase.RED);
-        dogFace.setMood(DogFaceView.Mood.STOP);
         updateStatus(testing ? "测试停下" : "Red Light  停下");
         speak("Red Light！");
     }
 
+    private void showThemeImage(int imageRes) {
+        themeImage.setImageResource(imageRes);
+        themeImage.setVisibility(View.VISIBLE);
+        dogFace.setVisibility(View.GONE);
+    }
+
+    private void hideThemeImage() {
+        themeImage.setVisibility(View.GONE);
+        dogFace.setVisibility(View.GONE);
+    }
+
+    private void showCountdown() {
+        signalView.setPhase(SignalView.Phase.HIDDEN);
+        showThemeImage(R.drawable.ui_ready);
+        mainHandler.postDelayed(() -> showThemeImage(R.drawable.ui_count_3), 700);
+        mainHandler.postDelayed(() -> showThemeImage(R.drawable.ui_count_2), 1400);
+        mainHandler.postDelayed(() -> showThemeImage(R.drawable.ui_count_1), 2100);
+        mainHandler.postDelayed(() -> showThemeImage(R.drawable.ui_go), 3000);
+    }
+
     private int randomPhaseDelayMs() {
-        return MIN_PHASE_MS + random.nextInt(MAX_PHASE_MS - MIN_PHASE_MS + 1);
+        return GREEN_PHASE_MS;
     }
 
     private void runSpecialActionTest(SpecialAction action) {
         motionToken.incrementAndGet();
         moveStreaming.set(false);
         showGreen(action, true);
-        network.execute(() -> {
+        robotCommands.execute(() -> {
             sendSpecialAction(action);
             sendStopBeforeRed();
             mainHandler.post(() -> {
@@ -619,7 +706,7 @@ public class MainActivity extends Activity {
     private void runSpecialGameAction(SpecialAction action) {
         motionToken.incrementAndGet();
         moveStreaming.set(false);
-        network.execute(() -> {
+        robotCommands.execute(() -> {
             prepareSpecialAction(action);
             if (!gameRunning) {
                 return;
@@ -630,40 +717,66 @@ public class MainActivity extends Activity {
                     showGreen(action, false);
                 }
             });
-            sleepQuietly(Math.max(randomPhaseDelayMs(), action.actionMs));
+            long redAtMs = System.currentTimeMillis() + Math.max(GREEN_PHASE_MS, action.actionMs);
+            long stopAtMs = Math.max(System.currentTimeMillis(), redAtMs - STOP_BEFORE_RED_MS);
+            sleepUntil(stopAtMs);
             if (!gameRunning) {
                 return;
             }
             sendStopBeforeRed();
-            mainHandler.post(() -> {
-                if (gameRunning) {
-                    showRed(false);
-                }
-            });
             sendStopAfterRed();
             if (hasGatewayFallback()) {
                 sendGatewayCommand("halt_move", 0.12);
             }
             recoverAfterSpecial(action);
+            waitForRobotReadyForRed(false, 0, RED_READY_TIMEOUT_SPECIAL_MS);
             mainHandler.post(() -> {
                 if (gameRunning) {
-                    mainHandler.postDelayed(nextGreen, randomPhaseDelayMs());
+                    showRed(false);
+                    mainHandler.postDelayed(nextGreen, RED_PHASE_MS);
                 }
             });
+        });
+    }
+
+    private void scheduleRedAt(boolean testing, long redAtMs) {
+        mainHandler.postDelayed(() -> {
+            if (testing ? testRunning : gameRunning) {
+                showRed(testing);
+            }
+        }, delayUntil(redAtMs));
+    }
+
+    private long delayUntil(long targetMs) {
+        return Math.max(0, targetMs - System.currentTimeMillis());
+    }
+
+    private void scheduleNextGreenAfter(long redAtMs) {
+        mainHandler.post(() -> {
+            if (gameRunning) {
+                mainHandler.postDelayed(nextGreen, delayUntil(redAtMs + RED_PHASE_MS));
+            }
+        });
+    }
+
+    private void scheduleNextTestStep() {
+        mainHandler.post(() -> {
+            if (testRunning) {
+                mainHandler.postDelayed(testStep, 1000);
+            }
         });
     }
 
     private void runLibraryGameAction(LibraryAction action) {
         int token = motionToken.incrementAndGet();
         moveStreaming.set(false);
-        int phaseMs = randomPhaseDelayMs();
-        network.execute(() -> runLibraryAction(action, false, token, phaseMs));
+        robotCommands.execute(() -> runLibraryAction(action, false, token, GREEN_PHASE_MS));
     }
 
     private void runLibraryActionTest(LibraryAction action) {
         int token = motionToken.incrementAndGet();
         moveStreaming.set(false);
-        network.execute(() -> runLibraryAction(action, true, token, action.testDurationMs));
+        robotCommands.execute(() -> runLibraryAction(action, true, token, action.testDurationMs));
     }
 
     private void runLibraryAction(LibraryAction action, boolean testing, int token, int phaseMs) {
@@ -678,11 +791,17 @@ public class MainActivity extends Activity {
             }
         }
 
-        long end = System.currentTimeMillis() + Math.max(MIN_PHASE_MS, phaseMs);
+        long redAtMs = System.currentTimeMillis() + (testing ? Math.max(1, phaseMs) : GREEN_PHASE_MS);
+        long actionEndMs = testing || action.warmupAction != null
+                ? redAtMs
+                : Math.max(System.currentTimeMillis(), redAtMs - STOP_BEFORE_RED_MS);
         int index = 0;
         boolean shown = false;
-        while (isLibraryActionActive(testing, token) && System.currentTimeMillis() < end) {
+        while (isLibraryActionActive(testing, token) && System.currentTimeMillis() < actionEndMs) {
             LibraryStep step = action.steps[index % action.steps.length];
+            if (shown && System.currentTimeMillis() + Math.max(0, step.durationMs) > actionEndMs) {
+                break;
+            }
             if (!shown && action.warmupAction != null && step.kind == LibraryStep.Kind.CMD) {
                 sendLibraryCmdStep(step);
                 mainHandler.post(() -> {
@@ -691,7 +810,7 @@ public class MainActivity extends Activity {
                     }
                 });
                 shown = true;
-                if (!sleepLibraryStep(step.durationMs, end, testing, token)) {
+                if (!sleepLibraryStep(step.durationMs, actionEndMs, testing, token)) {
                     break;
                 }
             } else {
@@ -703,7 +822,7 @@ public class MainActivity extends Activity {
                     });
                     shown = true;
                 }
-                if (!performLibraryStep(step, end, testing, token)) {
+                if (!performLibraryStep(step, actionEndMs, testing, token)) {
                     break;
                 }
             }
@@ -713,24 +832,78 @@ public class MainActivity extends Activity {
         if (!isLibraryActionActive(testing, token)) {
             return;
         }
+        prepareRobotForRed(action, testing, token);
+        if (testing) {
+            mainHandler.post(() -> {
+                if (isLibraryActionActive(true, token)) {
+                    showRed(true);
+                }
+            });
+        } else {
+            mainHandler.post(() -> {
+                if (isLibraryActionActive(false, token)) {
+                    showRed(false);
+                }
+            });
+        }
+        if (testing && testRunning && motionToken.get() == token) {
+            scheduleNextTestStep();
+        } else if (!testing && gameRunning && motionToken.get() == token) {
+            mainHandler.post(() -> {
+                if (gameRunning) {
+                    mainHandler.postDelayed(nextGreen, RED_PHASE_MS);
+                }
+            });
+        }
+    }
+
+    private void prepareRobotForRed(LibraryAction action, boolean testing, int token) {
         sendStopBeforeRed();
-        mainHandler.post(() -> {
-            if (isLibraryActionActive(testing, token)) {
-                showRed(testing);
-            }
-        });
         sendStopAfterRed();
         if (hasGatewayFallback()) {
             sendGatewayCommand("halt_move", 0.12);
         }
-        recoverAfterLibraryAction(action);
-        mainHandler.post(() -> {
-            if (testing && testRunning && motionToken.get() == token) {
-                mainHandler.postDelayed(testStep, 1000);
-            } else if (!testing && gameRunning && motionToken.get() == token) {
-                mainHandler.postDelayed(nextGreen, randomPhaseDelayMs());
+        if (action != null) {
+            recoverAfterLibraryAction(action);
+        }
+        int timeoutMs = action != null && action.warmupAction != null
+                ? RED_READY_TIMEOUT_SPECIAL_MS
+                : RED_READY_TIMEOUT_NORMAL_MS;
+        waitForRobotReadyForRed(testing, token, timeoutMs);
+    }
+
+    private void waitForRobotReadyForRed(boolean testing, int token, int timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(1000, timeoutMs);
+        int polls = 0;
+        while (isActionStillActive(testing, token) && System.currentTimeMillis() < deadline) {
+            if (isRobotReadyForRed()) {
+                return;
             }
-        });
+            if (polls % 4 == 0) {
+                sendDirectStopBurst(4, 20);
+            }
+            polls++;
+            sleepQuietly(250);
+        }
+        sendDirectStopBurst(10, 20);
+        sleepQuietly(300);
+    }
+
+    private boolean isActionStillActive(boolean testing, int token) {
+        if (token > 0) {
+            return isLibraryActionActive(testing, token);
+        }
+        return testing ? testRunning : gameRunning;
+    }
+
+    private boolean isRobotReadyForRed() {
+        try {
+            JSONObject response = getJson(robotStatusUrl(), 350, 650);
+            JSONObject robot = response.optJSONObject("robot");
+            return robot != null && robot.optBoolean("ready_for_red", false);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private boolean performLibraryStep(LibraryStep step, long phaseEndMs, boolean testing, int token) {
@@ -745,6 +918,10 @@ public class MainActivity extends Activity {
     }
 
     private void sendLibraryCmdStep(LibraryStep step) {
+        if (step.cmdCode == 5) {
+            sendDirectCmd(176, 8, 35);
+            sleepQuietly(300);
+        }
         sendDirectCmd(step.cmdCode, 10);
         if (hasGatewayFallback() && step.gatewayCmd != null && !step.gatewayCmd.isEmpty()) {
             sendGatewayCommand(step.gatewayCmd, 0.0);
@@ -756,8 +933,8 @@ public class MainActivity extends Activity {
             InetAddress address = InetAddress.getByName(robotIp);
             DatagramSocket socket = new DatagramSocket();
             try {
-                sendDirectCmd(socket, address, 174, 5, 30);
-                sleepQuietly(120);
+                sendDirectCmd(socket, address, usesLowSpeed(action) ? 174 : 175, 6, 30);
+                sleepQuietly(160);
                 long stepEnd = Math.min(phaseEndMs, System.currentTimeMillis() + Math.max(120, durationMs));
                 long lastGatewayMs = 0;
                 while (isLibraryActionActive(testing, token) && System.currentTimeMillis() < stepEnd) {
@@ -769,7 +946,6 @@ public class MainActivity extends Activity {
                     }
                     Thread.sleep(35);
                 }
-                sendDirectStopBurst(socket, address);
             } finally {
                 socket.close();
             }
@@ -817,21 +993,14 @@ public class MainActivity extends Activity {
 
     private void recoverAfterLibraryAction(LibraryAction action) {
         if (action.warmupAction != null) {
-            recoverAfterSpecial(action.warmupAction);
+            forceRecoverToReady();
         } else {
-            lockAfterAction();
+            lockWithoutRecover();
         }
     }
 
     private void prepareBeforeSpecialLibraryAction() {
-        sendDirectStopBurst();
-        sleepQuietly(180);
-        sendDirectCmd(155, 5);
-        sleepQuietly(900);
-        sendDirectCmd(122, 6);
-        sleepQuietly(STAND_READY_MS);
-        sendDirectCmd(175, 5);
-        sleepQuietly(220);
+        forceRecoverToReady();
     }
 
     private void lockAfterAction() {
@@ -846,7 +1015,7 @@ public class MainActivity extends Activity {
     private void beginMoveCommands(GameAction action, double maxSeconds) {
         int token = motionToken.incrementAndGet();
         moveStreaming.set(true);
-        network.execute(() -> directUdpMoveLoop(action, maxSeconds, token));
+        robotCommands.execute(() -> directUdpMoveLoop(action, maxSeconds, token));
         if (hasGatewayFallback()) {
             network.execute(() -> httpMovePulseLoop(action, maxSeconds, token));
         }
@@ -855,7 +1024,7 @@ public class MainActivity extends Activity {
     private void stopMoveCommands(boolean emergency) {
         motionToken.incrementAndGet();
         moveStreaming.set(false);
-        network.execute(this::sendDirectStopBurst);
+        robotCommands.execute(this::sendDirectStopBurst);
         if (hasGatewayFallback()) {
             network.execute(() -> {
                 sendGatewayCommand("halt_move", 0.12);
@@ -867,7 +1036,7 @@ public class MainActivity extends Activity {
     }
 
     private void sendStandCommands() {
-        network.execute(() -> {
+        robotCommands.execute(() -> {
             sendDirectCmd(122, 5);
             if (hasGatewayFallback()) {
                 sendGatewayCommand("stand", 0.0);
@@ -940,24 +1109,31 @@ public class MainActivity extends Activity {
     }
 
     private void recoverAfterManualStop() {
-        sendDirectStopBurst();
-        sleepQuietly(180);
-        sendDirectCmd(155, 6);
-        sleepQuietly(1000);
-        sendDirectCmd(122, 6);
-        sleepQuietly(STAND_READY_MS);
-        sendDirectCmd(174, 5);
-        sleepQuietly(220);
-        sendDirectStopBurst(6, 25);
+        forceRecoverToReady();
     }
 
     private void standAndLockAfterAction() {
-        sendDirectStopBurst();
+        forceRecoverToReady();
+    }
+
+    private void forceRecoverToReady() {
+        sendDirectStopBurst(14, 20);
+        sleepQuietly(120);
+        sendDirectCmd(155, 6, 30);
+        sleepQuietly(900);
+        sendDirectCmd(122, 8, 30);
+        sleepQuietly(1800);
+        sendDirectCmd(175, 6, 30);
         sleepQuietly(180);
-        sendDirectCmd(122, 6);
-        sleepQuietly(STAND_READY_MS);
-        sendDirectCmd(175, 5);
-        sleepQuietly(220);
+        sendDirectStopBurst(4, 20);
+    }
+
+    private void lockWithoutRecover() {
+        sendDirectStopBurst(12, 20);
+        sleepQuietly(100);
+        sendDirectCmd(175, 4, 30);
+        sleepQuietly(120);
+        sendDirectStopBurst(6, 20);
     }
 
     private void directUdpMoveLoop(GameAction action, double maxSeconds, int token) {
@@ -1003,6 +1179,15 @@ public class MainActivity extends Activity {
         JSONObject payload = new JSONObject();
         payload.put("type", "heartbeat");
         sendUdpJson(payload);
+    }
+
+    private void startHeartbeatLoop() {
+        heartbeat.scheduleWithFixedDelay(() -> {
+            try {
+                sendDirectHeartbeat();
+            } catch (Exception ignored) {
+            }
+        }, 0, 250, TimeUnit.MILLISECONDS);
     }
 
     private void sendDirectHeartbeat(DatagramSocket socket, InetAddress address) throws Exception {
@@ -1270,7 +1455,8 @@ public class MainActivity extends Activity {
     }
 
     private boolean usesLowSpeed(GameAction action) {
-        return action == FORWARD || action == BACKWARD;
+        return action == FORWARD
+                || action == BACKWARD;
     }
 
     private String postJson(String target, String body, int connectTimeoutMs, int readTimeoutMs) throws Exception {
@@ -1284,6 +1470,14 @@ public class MainActivity extends Activity {
             os.write(body.getBytes(StandardCharsets.UTF_8));
         }
         return readResponse(conn);
+    }
+
+    private JSONObject getJson(String target, int connectTimeoutMs, int readTimeoutMs) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(connectTimeoutMs);
+        conn.setReadTimeout(readTimeoutMs);
+        return new JSONObject(readResponse(conn));
     }
 
     private void configureRobotInternet(String ssid, String password, boolean openNetwork) {
@@ -1317,6 +1511,10 @@ public class MainActivity extends Activity {
 
     private String networkConfigureUrl() {
         return networkBaseUrl() + "/network/configure";
+    }
+
+    private String robotStatusUrl() {
+        return networkBaseUrl() + "/robot/status";
     }
 
     private String networkBaseUrl() {
@@ -1456,6 +1654,15 @@ public class MainActivity extends Activity {
             Thread.sleep(ms);
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private void sleepUntil(long targetMs) {
+        while (System.currentTimeMillis() < targetMs) {
+            sleepQuietly(Math.min(100, targetMs - System.currentTimeMillis()));
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
         }
     }
 

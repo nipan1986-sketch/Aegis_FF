@@ -10,10 +10,12 @@ the robot hotspot.
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -21,6 +23,21 @@ from urllib.parse import parse_qs, urlparse
 DEFAULT_HOTSPOT_IP = "192.168.234.1"
 DEFAULT_HOTSPOT_CIDR = "192.168.234.0/24"
 DEFAULT_CONNECTION_NAME = "rlgl-external-wifi"
+READY_SPEED_THRESHOLD = float(os.environ.get("RLGL_READY_SPEED", "0.08"))
+READY_ANGULAR_THRESHOLD = float(os.environ.get("RLGL_READY_ANGULAR", "0.18"))
+
+
+STATE_LOCK = threading.Lock()
+ROBOT_STATE = {
+    "available": False,
+    "last_update_ms": 0,
+    "speed": None,
+    "angular_speed": None,
+    "moving": None,
+    "stable": False,
+    "faults": [],
+    "error": "ROS status subscriber not started",
+}
 
 
 def run_cmd(cmd, timeout=20):
@@ -33,6 +50,95 @@ def run_cmd(cmd, timeout=20):
         check=False,
     )
     return proc.returncode, proc.stdout or ""
+
+
+def _vec_norm(values):
+    total = 0.0
+    for value in values or []:
+        try:
+            total += float(value) * float(value)
+        except Exception:
+            pass
+    return math.sqrt(total)
+
+
+def _get_xyz(msg):
+    if msg is None:
+        return []
+    return [getattr(msg, "x", 0.0), getattr(msg, "y", 0.0), getattr(msg, "z", 0.0)]
+
+
+def _faults_to_list(msg):
+    result = []
+    for item in getattr(msg, "fault_info", []) or []:
+        result.append(
+            {
+                "module": getattr(item, "module", ""),
+                "submodule": getattr(item, "submodule", ""),
+                "fault_code": getattr(item, "fault_code", 0),
+                "level": getattr(item, "level", ""),
+                "info": getattr(item, "info", ""),
+            }
+        )
+    return result
+
+
+def _set_robot_state(**updates):
+    with STATE_LOCK:
+        ROBOT_STATE.update(updates)
+
+
+def robot_status_snapshot():
+    with STATE_LOCK:
+        data = dict(ROBOT_STATE)
+    now_ms = int(time.time() * 1000)
+    age_ms = now_ms - int(data.get("last_update_ms") or 0) if data.get("last_update_ms") else None
+    data["age_ms"] = age_ms
+    data["fresh"] = age_ms is not None and age_ms < 1500
+    data["ready_for_red"] = bool(data.get("fresh") and data.get("stable") and not data.get("faults"))
+    return data
+
+
+def start_ros_status_subscriber():
+    def worker():
+        try:
+            import rclpy
+            from robots_dog_msgs.msg import FaultInfoMultiArray, HighLevelRobotState
+        except Exception as exc:
+            _set_robot_state(available=False, error="ROS import failed: %s" % exc)
+            return
+
+        try:
+            rclpy.init(args=None)
+            node = rclpy.create_node("rlgl_status_monitor")
+
+            def on_state(msg):
+                speed = max(_vec_norm(_get_xyz(getattr(msg, "vel", None))), _vec_norm(_get_xyz(getattr(msg, "vel_world", None))))
+                angular_speed = _vec_norm(_get_xyz(getattr(msg, "gyro", None)))
+                moving = speed > READY_SPEED_THRESHOLD or angular_speed > READY_ANGULAR_THRESHOLD
+                _set_robot_state(
+                    available=True,
+                    last_update_ms=int(time.time() * 1000),
+                    speed=speed,
+                    angular_speed=angular_speed,
+                    speed_threshold=READY_SPEED_THRESHOLD,
+                    angular_threshold=READY_ANGULAR_THRESHOLD,
+                    moving=moving,
+                    stable=not moving,
+                    error=None,
+                )
+
+            def on_fault(msg):
+                _set_robot_state(faults=_faults_to_list(msg))
+
+            node.create_subscription(HighLevelRobotState, "/highlevel_robotstate", on_state, 10)
+            node.create_subscription(FaultInfoMultiArray, "/fault_info", on_fault, 10)
+            rclpy.spin(node)
+        except Exception as exc:
+            _set_robot_state(available=False, error="ROS subscriber failed: %s" % exc)
+
+    thread = threading.Thread(target=worker, name="rlgl-ros-status", daemon=True)
+    thread.start()
 
 
 def shell_status():
@@ -331,6 +437,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/status", "/status/", "/network/status", "/network/status/"):
             self._send_json(200, {"ok": True, "service": "rlgl-network-service", "status": shell_status()[-8000:]})
             return
+        if path in ("/robot/status", "/robot/status/"):
+            self._send_json(200, {"ok": True, "robot": robot_status_snapshot()})
+            return
         self._send_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -360,6 +469,7 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=int(os.environ.get("RLGL_NETWORK_PORT", "8876")))
     args = parser.parse_args()
+    start_ros_status_subscriber()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print("RLGL network service listening on %s:%s" % (args.host, args.port), flush=True)
     server.serve_forever()
